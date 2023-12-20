@@ -1,3 +1,5 @@
+mod handlers;
+
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -6,6 +8,7 @@ use axum::{
     Router,
 };
 use clap::Parser;
+use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
 
 #[derive(Debug, Parser)]
@@ -26,12 +29,16 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
     let state = Arc::new(AppState::default());
+    let serve_dir = ServeDir::new("public").not_found_service(ServeFile::new("public/index.html"));
     let app = Router::new()
-        .route("/", get(|| async { "Hello, World!" }))
+        .route("/api/chats", get(handlers::chats_handler))
+        .nest_service("/assets", ServeDir::new("./public/assets"))
+        .fallback_service(serve_dir)
         .with_state(state);
 
     let addr = format!("0.0.0.0:{}", args.port);
     info!("Listening on {}", addr);
+
     axum::Server::bind(&addr.parse()?)
         .serve(app.into_make_service())
         .await?;
