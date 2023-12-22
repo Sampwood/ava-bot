@@ -3,9 +3,10 @@ use std::sync::Arc;
 use anyhow::anyhow;
 use axum::{
     extract::{Multipart, State},
-    response::IntoResponse, Json,
+    response::IntoResponse,
+    Json,
 };
-use llm_sdk::WhisperRequest;
+use llm_sdk::{ChatCompletionRequest, WhisperRequest, ChatCompletionMessage};
 use serde_json::json;
 use tracing::info;
 
@@ -27,5 +28,16 @@ pub async fn assistant_handler(
 
     let req = WhisperRequest::transcription(data.to_vec());
     let res = state.llm_sdk.whisper(req).await?;
-    Ok(Json(json!({ "len": len, "request": res.text, "response": "" })))
+    let request = res.text;
+
+    let messages = vec![
+        ChatCompletionMessage::new_system("I can choose the right function for you.", ""),
+        ChatCompletionMessage::new_user(&request, "user1"),
+    ];
+    let req = ChatCompletionRequest::new(messages);
+    let res = state.llm_sdk.chat_completion(req).await?;
+
+    Ok(Json(
+        json!({ "len": len, "request": request, "response": res.choices[0].message.content }),
+    ))
 }
