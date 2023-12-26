@@ -12,18 +12,20 @@ use uuid::Uuid;
 
 #[derive(Debug)]
 pub struct AppState {
-    pub llm_sdk: LlmSdk,
-    pub public_path: PathBuf,
+    public_path: PathBuf,
+    pub(crate) llm_sdk: LlmSdk,
+    // pub(crate) EventMap: 
+
 }
 
-impl Default for AppState {
-    fn default() -> Self {
+impl AppState {
+    pub fn new(public_path: &Path) -> Self {
         Self {
             llm_sdk: LlmSdk::new_with_base_url(
                 var("OPENAI_API_KEY").unwrap(),
                 "https://api.openai.com/v1",
             ),
-            public_path: Path::new("public").to_path_buf(),
+            public_path: public_path.to_path_buf(),
         }
     }
 }

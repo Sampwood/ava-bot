@@ -1,8 +1,4 @@
-use std::{
-    os::macos::raw::stat,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use axum::{
@@ -10,7 +6,6 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use axum_extra::extract::CookieJar;
 use llm_sdk::{
     ChatCompletionMessage, ChatCompletionRequest, LlmSdk, SpeechRequest, WhisperRequest,
 };
@@ -18,9 +13,7 @@ use serde_json::json;
 use tokio::fs;
 use tracing::info;
 
-use crate::{
-    audio_path, error::AppError, extractors::AppContext, handlers::common::COOKIE_NAME, AppState,
-};
+use crate::{audio_path, error::AppError, extractors::AppContext, AppState};
 
 pub async fn assistant_handler(
     context: AppContext,
