@@ -1,16 +1,18 @@
-mod handlers;
-mod error;
-
-use std::{sync::Arc, env::var};
+use std::{
+    env::var,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use anyhow::Result;
+use ava_bot::{AppState, handlers::{chats_handler, assistant_handler, common}};
 use axum::{
+    middleware::from_fn,
     routing::{get, post},
     Router,
 };
 use clap::Parser;
-use llm_sdk::LlmSdk;
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::services::ServeDir;
 use tracing::info;
 
 #[derive(Debug, Parser)]
@@ -22,31 +24,17 @@ struct Args {
     cert_path: String,
 }
 
-#[derive(Debug)]
-pub struct AppState {
-    llm_sdk: LlmSdk,
-}
-
-impl Default for AppState {
-    fn default() -> Self {
-        Self {
-            llm_sdk: LlmSdk::new_with_base_url(var("OPENAI_API_KEY").unwrap(), "https://api.openai.com/v1"),
-        }
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
     let args = Args::parse();
     let state = Arc::new(AppState::default());
-    let serve_dir = ServeDir::new("public").not_found_service(ServeFile::new("public/index.html"));
     let app = Router::new()
-        .route("/api/chats", get(handlers::chats_handler))
-        .route("/api/assistant", post(handlers::assistant_handler))
-        .nest_service("/assets", ServeDir::new("./public/assets"))
-        .fallback_service(serve_dir)
+        .route("/api/chats", get(chats_handler))
+        .route("/api/assistant", post(assistant_handler))
+        .layer(from_fn(common::layer_auth))
+        .fallback_service(ServeDir::new(&state.public_path))
         .with_state(state);
 
     let addr = format!("0.0.0.0:{}", args.port);
