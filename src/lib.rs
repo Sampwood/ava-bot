@@ -7,15 +7,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use dashmap::DashMap;
 use llm_sdk::LlmSdk;
+use tokio::sync::broadcast;
 use uuid::Uuid;
 
 #[derive(Debug)]
 pub struct AppState {
     public_path: PathBuf,
-    pub(crate) llm_sdk: LlmSdk,
-    // pub(crate) EventMap: 
-
+    llm_sdk: LlmSdk,
+    senders: DashMap<String, broadcast::Sender<String>>
 }
 
 impl AppState {
@@ -26,6 +27,7 @@ impl AppState {
                 "https://api.openai.com/v1",
             ),
             public_path: public_path.to_path_buf(),
+            senders: DashMap::new(),
         }
     }
 }

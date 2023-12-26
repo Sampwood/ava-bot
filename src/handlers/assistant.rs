@@ -4,13 +4,14 @@ use anyhow::{anyhow, Result};
 use axum::{
     extract::{Multipart, State},
     response::IntoResponse,
-    Json,
 };
+use dashmap::mapref::one::Ref;
 use llm_sdk::{
     ChatCompletionMessage, ChatCompletionRequest, LlmSdk, SpeechRequest, WhisperRequest,
 };
-use serde_json::json;
-use tokio::fs;
+use serde::Serialize;
+use serde_json::{json, Value};
+use tokio::{fs, sync::broadcast::Sender};
 use tracing::info;
 
 use crate::{audio_path, error::AppError, extractors::AppContext, AppState};
@@ -20,6 +21,9 @@ pub async fn assistant_handler(
     State(state): State<Arc<AppState>>,
     mut data: Multipart,
 ) -> Result<impl IntoResponse, AppError> {
+    let sender = get_sender(&state, &context.device_id)?;
+
+    sender.send(EventType::in_audio_upload())?;
     let Some(field) = data.next_field().await.unwrap() else {
         return Err(anyhow!("expected an audio field"))?;
     };
@@ -30,16 +34,28 @@ pub async fn assistant_handler(
     let len = data.len();
     info!("Length of `audio` is {} bytes", data.len());
 
+    sender.send(EventType::in_transcription())?;
     let req = WhisperRequest::transcription(data.to_vec());
     let res = state.llm_sdk.whisper(req).await?;
     let input = res.text;
 
+    sender.send(EventType::in_chat_completion())?;
     let output = chat_completion(&state.llm_sdk, &input).await?;
+    sender.send(EventType::in_speech())?;
     let audio_url = speech(&state, &context.device_id, &output).await?;
 
-    Ok(Json(
-        json!({ "len": len, "request": input, "response": output, "audio_url": audio_url }),
-    ))
+    sender.send(EventType::done())?;
+    let res_data =
+        json!({ "len": len, "request": input, "response": output, "audio_url": audio_url });
+    sender.send(EventType::message(res_data))?;
+    Ok(())
+}
+
+fn get_sender<'a>(state: &'a AppState, device_id: &str) -> Result<Ref<'a, String, Sender<String>>> {
+    state
+        .senders
+        .get(device_id)
+        .ok_or_else(|| anyhow!("device_id not found in senders"))
 }
 
 async fn chat_completion(llm_sdk: &LlmSdk, prompt: &str) -> Result<String> {
@@ -74,4 +90,41 @@ async fn speech(state: &AppState, device_id: &str, output: &str) -> Result<Strin
     fs::write(&path, data).await?;
 
     Ok(url)
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
+enum EventType {
+    Message(Value),
+    Signal(SignalType),
+}
+#[derive(Debug, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum SignalType {
+    UploadAudio,
+    Transcription,
+    ChatCompletion,
+    Speech,
+    Done,
+}
+
+impl EventType {
+    fn message(value: Value) -> String {
+        serde_json::to_string(&EventType::Message(value)).unwrap()
+    }
+    fn in_audio_upload() -> String {
+        serde_json::to_string(&EventType::Signal(SignalType::UploadAudio)).unwrap()
+    }
+    fn in_transcription() -> String {
+        serde_json::to_string(&EventType::Signal(SignalType::Transcription)).unwrap()
+    }
+    fn in_chat_completion() -> String {
+        serde_json::to_string(&EventType::Signal(SignalType::ChatCompletion)).unwrap()
+    }
+    fn in_speech() -> String {
+        serde_json::to_string(&EventType::Signal(SignalType::Speech)).unwrap()
+    }
+    fn done() -> String {
+        serde_json::to_string(&EventType::Signal(SignalType::Done)).unwrap()
+    }
 }
