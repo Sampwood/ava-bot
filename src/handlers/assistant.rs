@@ -109,22 +109,25 @@ enum SignalType {
 }
 
 impl EventType {
+    fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap()
+    }
     fn message(value: Value) -> String {
-        serde_json::to_string(&EventType::Message(value)).unwrap()
+        EventType::Message(value).to_json()
     }
     fn in_audio_upload() -> String {
-        serde_json::to_string(&EventType::Signal(SignalType::UploadAudio)).unwrap()
+        EventType::Signal(SignalType::UploadAudio).to_json()
     }
     fn in_transcription() -> String {
-        serde_json::to_string(&EventType::Signal(SignalType::Transcription)).unwrap()
+        EventType::Signal(SignalType::Transcription).to_json()
     }
     fn in_chat_completion() -> String {
-        serde_json::to_string(&EventType::Signal(SignalType::ChatCompletion)).unwrap()
+        EventType::Signal(SignalType::ChatCompletion).to_json()
     }
     fn in_speech() -> String {
-        serde_json::to_string(&EventType::Signal(SignalType::Speech)).unwrap()
+        EventType::Signal(SignalType::Speech).to_json()
     }
     fn done() -> String {
-        serde_json::to_string(&EventType::Signal(SignalType::Done)).unwrap()
+        EventType::Signal(SignalType::Done).to_json()
     }
 }

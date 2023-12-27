@@ -1,20 +1,44 @@
 import { useEffect, useState } from 'react'
-import { Voice } from '@icon-park/react'
+import { LoadingOne, Voice } from '@icon-park/react'
 
 let chunks: Blob[] = []
 let mediaRecorder: MediaRecorder | null = null
 
+type Msg = {
+  len: number
+  request: string
+  response: string
+  audio_url: string
+}
+type SseData =
+  | {
+      type: 'signal'
+      data: {
+        status: string
+      }
+    }
+  | {
+      type: 'message'
+      data: Msg
+    }
+
 function App() {
   const [isSupported, setIsSupported] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
-  const [msgList, setMsgList] = useState<string[]>([])
+  const [msgList, setMsgList] = useState<Msg[]>([])
+  const [status, setStatus] = useState('')
 
   useEffect(() => {
     checkMedia()
 
     const sse = new EventSource('/api/chats')
     sse.onmessage = (e) => {
-      setMsgList((list) => [...list, e.data])
+      const data: SseData = JSON.parse(e.data)
+      if (data.type === 'message') {
+        setMsgList((list) => [...list, data.data])
+      } else {
+        setStatus(data.data.status === 'done' ? '' : data.data.status)
+      }
     }
 
     sse.onerror = () => sse.close()
@@ -70,23 +94,28 @@ function App() {
       method: 'POST',
       body: formData,
     })
-    console.log(res);
+    console.log(res)
   }
 
   return (
     <div className="w-2/3 mx-auto items-center justify-center p-2 mt-2">
       <h1 className="text-center text-2xl">Hello world</h1>
-      <ul>
+      <p>
         Contents of this box will be updated in real time with every SSE message received from the
         chatroom.
-        {/* {msgList.map((msg, index) => (
-          <li key={index}>{msg}</li>
-        ))} */}
+      </p>
+      <ul className="mt-3 border border-solid rounded-lg p-2">
+        {msgList.map((msg, index) => (
+          <li key={index} className="my-2 pt-3 px-1 bg-zinc-100 rounded-lg">
+            <p className='pl-5'>{msg.response}</p>
+            <audio src={msg.audio_url} controls></audio>
+          </li>
+        ))}
       </ul>
 
       <section className="sound-clips"></section>
 
-      <div className="mt-10 flex justify-center">
+      <div className="mt-6 flex justify-center">
         {/* TODO: 开始录音时，增加心跳动画 */}
         <button
           className={`w-12 h-12 rounded-full text-white flex justify-center items-center ${
@@ -98,6 +127,12 @@ function App() {
           <Voice className="text-xl" />
         </button>
       </div>
+      {status && (
+        <div className="mt-2 flex justify-center items-center">
+          <LoadingOne className="animate-spin" />
+          <span className="ml-2 text-neutral-400">{status}</span>
+        </div>
+      )}
     </div>
   )
 }
