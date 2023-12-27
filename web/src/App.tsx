@@ -1,15 +1,23 @@
 import { useEffect, useState } from 'react'
 import { LoadingOne, Voice } from '@icon-park/react'
+import Ava from './components/chats/ava'
+import User from './components/chats/user'
 
 let chunks: Blob[] = []
 let mediaRecorder: MediaRecorder | null = null
 
-type Msg = {
-  len: number
-  request: string
-  response: string
-  audio_url: string
-}
+type Msg =
+  | {
+      type: 'user'
+      message: string
+      data_time: string
+    }
+  | {
+      type: 'ava'
+      message: string
+      url: string
+      data_time: string
+    }
 type SseData =
   | {
       type: 'signal'
@@ -104,13 +112,14 @@ function App() {
         Contents of this box will be updated in real time with every SSE message received from the
         chatroom.
       </p>
-      <ul className="mt-3 border border-solid rounded-lg p-2">
-        {msgList.map((msg, index) => (
-          <li key={index} className="my-2 pt-3 px-1 bg-zinc-100 rounded-lg">
-            <p className='pl-5'>{msg.response}</p>
-            <audio src={msg.audio_url} controls></audio>
-          </li>
-        ))}
+      <ul className="mt-3 rounded-lg p-2 relative border-s border-gray-200">
+        {msgList.map((msg, index) =>
+          msg.type === 'ava' ? (
+            <Ava key={index} time={msg.data_time} message={msg.message} url={msg.url} />
+          ) : (
+            <User key={index} time={msg.data_time} message={msg.message} />
+          )
+        )}
       </ul>
 
       <section className="sound-clips"></section>

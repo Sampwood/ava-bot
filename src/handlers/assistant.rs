@@ -5,14 +5,15 @@ use axum::{
     extract::{Multipart, State},
     response::IntoResponse,
 };
+use chrono::Local;
 use dashmap::mapref::one::Ref;
 use llm_sdk::{
-    ChatCompletionMessage, ChatCompletionRequest, LlmSdk, SpeechRequest, WhisperRequest,
+    ChatCompletionMessage, ChatCompletionRequest, LlmSdk, SpeechRequest,
+    WhisperRequestBuilder, WhisperRequestType,
 };
 use serde::Serialize;
 use serde_json::{json, Value};
 use tokio::{fs, sync::broadcast::Sender};
-use tracing::info;
 
 use crate::{audio_path, error::AppError, extractors::AppContext, AppState};
 
@@ -23,7 +24,7 @@ pub async fn assistant_handler(
 ) -> Result<impl IntoResponse, AppError> {
     let sender = get_sender(&state, &context.device_id)?;
 
-    sender.send(EventType::in_audio_upload())?;
+    sender.send(EventType::signal_audio_upload())?;
     let Some(field) = data.next_field().await.unwrap() else {
         return Err(anyhow!("expected an audio field"))?;
     };
@@ -31,23 +32,19 @@ pub async fn assistant_handler(
         Some("audio") => field.bytes().await?,
         _ => return Err(anyhow!("expected an audio field"))?,
     };
-    let len = data.len();
-    info!("Length of `audio` is {} bytes", data.len());
 
-    sender.send(EventType::in_transcription())?;
-    let req = WhisperRequest::transcription(data.to_vec());
-    let res = state.llm_sdk.whisper(req).await?;
-    let input = res.text;
+    sender.send(EventType::signal_transcription())?;
+    let input = transcript(&state.llm_sdk, data.to_vec()).await?;
 
-    sender.send(EventType::in_chat_completion())?;
+    sender.send(EventType::message_input(&input))?;
+
+    sender.send(EventType::signal_chat_completion())?;
     let output = chat_completion(&state.llm_sdk, &input).await?;
-    sender.send(EventType::in_speech())?;
+    sender.send(EventType::signal_speech())?;
     let audio_url = speech(&state, &context.device_id, &output).await?;
 
-    sender.send(EventType::done())?;
-    let res_data =
-        json!({ "len": len, "request": input, "response": output, "audio_url": audio_url });
-    sender.send(EventType::message(res_data))?;
+    sender.send(EventType::signal_done())?;
+    sender.send(EventType::message_speech(&output, &audio_url))?;
     Ok(())
 }
 
@@ -56,6 +53,17 @@ fn get_sender<'a>(state: &'a AppState, device_id: &str) -> Result<Ref<'a, String
         .senders
         .get(device_id)
         .ok_or_else(|| anyhow!("device_id not found in senders"))
+}
+
+async fn transcript(llm_sdk: &LlmSdk, data: Vec<u8>) -> Result<String> {
+    let req = WhisperRequestBuilder::default()
+        .file(data)
+        .prompt("If audio language is Chinese, please use Simplified Chinese")
+        .request_type(WhisperRequestType::Transcription)
+        .build()
+        .unwrap();
+    let res = llm_sdk.whisper(req).await?;
+    Ok(res.text)
 }
 
 async fn chat_completion(llm_sdk: &LlmSdk, prompt: &str) -> Result<String> {
@@ -112,22 +120,39 @@ impl EventType {
     fn to_json(&self) -> String {
         serde_json::to_string(self).unwrap()
     }
+
     fn message(value: Value) -> String {
         EventType::Message(value).to_json()
     }
-    fn in_audio_upload() -> String {
+    fn message_input(message: &str) -> String {
+        EventType::message(json!({
+            "type": "user",
+            "message": message,
+            "date_time": Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        }))
+    }
+    fn message_speech(message: &str, url: &str) -> String {
+        EventType::message(json!({
+            "type": "ava",
+            "message": message,
+            "url": url,
+            "date_time": Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        }))
+    }
+
+    fn signal_audio_upload() -> String {
         EventType::Signal(SignalType::UploadAudio).to_json()
     }
-    fn in_transcription() -> String {
+    fn signal_transcription() -> String {
         EventType::Signal(SignalType::Transcription).to_json()
     }
-    fn in_chat_completion() -> String {
+    fn signal_chat_completion() -> String {
         EventType::Signal(SignalType::ChatCompletion).to_json()
     }
-    fn in_speech() -> String {
+    fn signal_speech() -> String {
         EventType::Signal(SignalType::Speech).to_json()
     }
-    fn done() -> String {
+    fn signal_done() -> String {
         EventType::Signal(SignalType::Done).to_json()
     }
 }
