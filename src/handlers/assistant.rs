@@ -8,14 +8,15 @@ use axum::{
 use chrono::Local;
 use dashmap::mapref::one::Ref;
 use llm_sdk::{
-    ChatCompletionMessage, ChatCompletionRequest, LlmSdk, SpeechRequest,
+    ChatCompletionMessage, ChatCompletionRequest, CreateImageRequest, LlmSdk, SpeechRequest, Tool,
     WhisperRequestBuilder, WhisperRequestType,
 };
-use serde::Serialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::{fs, sync::broadcast::Sender};
 
-use crate::{audio_path, error::AppError, extractors::AppContext, AppState};
+use crate::{audio_path, error::AppError, extractors::AppContext, write_file, AppState};
 
 pub async fn assistant_handler(
     context: AppContext,
@@ -39,12 +40,8 @@ pub async fn assistant_handler(
     sender.send(EventType::message_input(&input))?;
 
     sender.send(EventType::signal_chat_completion())?;
-    let output = chat_completion(&state.llm_sdk, &input).await?;
-    sender.send(EventType::signal_speech())?;
-    let audio_url = speech(&state, &context.device_id, &output).await?;
+    chat_completion_with_tools(&state, &context.device_id, &input, &sender).await?;
 
-    sender.send(EventType::signal_done())?;
-    sender.send(EventType::message_speech(&output, &audio_url))?;
     Ok(())
 }
 
@@ -66,6 +63,7 @@ async fn transcript(llm_sdk: &LlmSdk, data: Vec<u8>) -> Result<String> {
     Ok(res.text)
 }
 
+#[allow(dead_code)]
 async fn chat_completion(llm_sdk: &LlmSdk, prompt: &str) -> Result<String> {
     let messages = vec![
         ChatCompletionMessage::new_system("I can choose the right function for you.", "ava"),
@@ -83,19 +81,66 @@ async fn chat_completion(llm_sdk: &LlmSdk, prompt: &str) -> Result<String> {
     Ok(content)
 }
 
+async fn chat_completion_with_tools(
+    state: &AppState,
+    device_id: &str,
+    prompt: &str,
+    sender: &Sender<String>,
+) -> Result<String> {
+    let messages = vec![
+        ChatCompletionMessage::new_system("I can help to identify which tool to use, if no proper tool could be used, I'll directly reply the message with pure text", "ava"),
+        ChatCompletionMessage::new_user(prompt, "user1"),
+    ];
+    let tools = vec![
+        Tool::new_function::<DrawImageArgs>("draw_image", "Draw an image based on the prompt."),
+        // Tool::new_function::<WriteCodeArgs>("write_code", "Write code based on the prompt."),
+        // Tool::new_function::<AnswerArgs>("answer", "Just reply based on the prompt."),
+    ];
+    let req = ChatCompletionRequest::new_with_tools(messages, tools);
+    let mut res = state.llm_sdk.chat_completion(req).await?;
+    let mut message = res
+        .choices
+        .pop()
+        .ok_or_else(|| anyhow!("expect at least one choice"))?
+        .message;
+    let function = &message
+        .tool_calls
+        .pop()
+        .ok_or_else(|| anyhow!("expect at least one toll_call"))?
+        .function;
+
+    if function.name == "draw_image" {
+        let args: DrawImageArgs = serde_json::from_str(&function.arguments)?;
+        let (url, revised_prompt) = draw_image(&state.llm_sdk, &args.prompt).await?;
+        sender.send(EventType::message_draw(&revised_prompt, &url))?;
+    } else {
+        let content = message
+            .content
+            .ok_or_else(|| anyhow!("expect content but no content available"))?;
+
+        sender.send(EventType::signal_speech())?;
+        let audio_url = speech(&state, device_id, &content).await?;
+
+        sender.send(EventType::signal_done())?;
+        sender.send(EventType::message_speech(&content, &audio_url))?;
+    }
+
+    Ok("".to_owned())
+}
+
+async fn draw_image(llm_sdk: &LlmSdk, prompt: &str) -> Result<(String, String)> {
+    let req = CreateImageRequest::new(prompt);
+    let mut res = llm_sdk.create_image(req).await?;
+    let image = res.data.pop().unwrap();
+    Ok((image.url.unwrap(), image.revised_prompt))
+}
+
 async fn speech(state: &AppState, device_id: &str, output: &str) -> Result<String> {
     let req = SpeechRequest::new(output);
     let data = state.llm_sdk.speech(req).await?;
 
     let (relative_path, url) = audio_path(device_id);
-    let path = state.public_path.join(&relative_path);
-
-    if let Some(parent) = path.parent() {
-        if !parent.exists() {
-            fs::create_dir_all(parent).await?;
-        }
-    }
-    fs::write(&path, data).await?;
+    write_file(state.public_path.join(&relative_path), data).await?;
 
     Ok(url)
 }
@@ -126,15 +171,25 @@ impl EventType {
     }
     fn message_input(message: &str) -> String {
         EventType::message(json!({
-            "type": "user",
+            "owner": "user",
             "message": message,
             "date_time": Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
         }))
     }
     fn message_speech(message: &str, url: &str) -> String {
         EventType::message(json!({
-            "type": "ava",
+            "owner": "ava",
+            "type": "speech",
             "message": message,
+            "url": url,
+            "date_time": Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        }))
+    }
+    fn message_draw(revised_prompt: &str, url: &str) -> String {
+        EventType::message(json!({
+            "owner": "ava",
+            "type": "image",
+            "prompt": revised_prompt,
             "url": url,
             "date_time": Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
         }))
@@ -155,4 +210,9 @@ impl EventType {
     fn signal_done() -> String {
         EventType::Signal(SignalType::Done).to_json()
     }
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+struct DrawImageArgs {
+    prompt: String,
 }

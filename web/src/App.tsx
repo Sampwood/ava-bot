@@ -8,13 +8,21 @@ let mediaRecorder: MediaRecorder | null = null
 
 type Msg =
   | {
-      type: 'user'
+      owner: 'user'
       message: string
       data_time: string
     }
   | {
-      type: 'ava'
+      owner: 'ava'
+      type: 'speech'
       message: string
+      url: string
+      data_time: string
+    }
+  | {
+      owner: 'ava'
+      type: 'image'
+      prompt: string
       url: string
       data_time: string
     }
@@ -114,8 +122,14 @@ function App() {
       </p>
       <ul className="mt-3 rounded-lg p-2 relative border-s border-gray-200">
         {msgList.map((msg, index) =>
-          msg.type === 'ava' ? (
-            <Ava key={index} time={msg.data_time} message={msg.message} url={msg.url} />
+          msg.owner === 'ava' ? (
+            <Ava
+              key={index}
+              type={msg.type}
+              time={msg.data_time}
+              message={msg.type === 'image' ? msg.prompt : msg.message}
+              url={msg.url}
+            />
           ) : (
             <User key={index} time={msg.data_time} message={msg.message} />
           )

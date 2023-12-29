@@ -162,6 +162,7 @@ dependencies = [
  "dashmap",
  "futures",
  "llm-sdk",
+ "schemars",
  "serde",
  "serde_json",
  "tokio",

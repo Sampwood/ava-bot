@@ -1,4 +1,5 @@
 interface IProps {
+  type: 'speech' | 'image'
   time: string
   message: string
   url: string

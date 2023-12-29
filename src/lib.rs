@@ -7,10 +7,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use axum::body::Bytes;
 use dashmap::DashMap;
 use llm_sdk::LlmSdk;
-use tokio::sync::broadcast;
+use tokio::{sync::broadcast, fs};
 use uuid::Uuid;
+use anyhow::Result;
 
 #[derive(Debug)]
 pub struct AppState {
@@ -30,6 +32,16 @@ impl AppState {
             senders: DashMap::new(),
         }
     }
+}
+
+pub async fn write_file(path: PathBuf, data:  Bytes) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent).await?;
+        }
+    }
+    fs::write(&path, data).await?;
+    Ok(())
 }
 
 pub fn audio_path(device_id: &str) -> (PathBuf, String) {
